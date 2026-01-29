@@ -3,7 +3,6 @@ import { test, expect, request } from '@playwright/test';
 test('Get Test Tags', async ({ request }) => {
   const tagsResponse = await request.get('https://conduit-api.bondaracademy.com/api/tags')
   const tagsResponseJSON = await tagsResponse.json()
-  console.log(tagsResponseJSON)
 
   expect(tagsResponse.status()).toEqual(200)
   expect(tagsResponseJSON.tags[0]).toEqual('Test')
@@ -13,7 +12,6 @@ test('Get Test Tags', async ({ request }) => {
 test('Get All Article', async ({ request }) => {
   const articleResponse = await request.get('https://conduit-api.bondaracademy.com/api/articles?limit=10&offset=0')
   const articleResponseJSON = await articleResponse.json()
-  console.log(articleResponseJSON)
 
   expect(articleResponse.status()).toEqual(200)
   expect(articleResponseJSON.articles.length).toBeLessThanOrEqual(10)
@@ -32,7 +30,6 @@ test('Create Article', async ({ request }) => {
   })
   const tokenResponseJSON = await tokenResponse.json()
   const authToken = 'Token ' + tokenResponseJSON.user.token
-  console.log(authToken)
 
   const newArticleResponse = await request.post('https://conduit-api.bondaracademy.com/api/articles/', {
     data: {
@@ -50,7 +47,6 @@ test('Create Article', async ({ request }) => {
     }
   })
   const newArticleResponseJSON = await newArticleResponse.json()
-  console.log(newArticleResponseJSON)
   expect(newArticleResponse.status()).toEqual(201)
   expect(newArticleResponseJSON.article.title).toEqual('Test Create Article')
   const slugId = await newArticleResponseJSON.article.slug
@@ -86,12 +82,11 @@ test('Create, Update and Delete Article', async ({ request }) => {
   })
   const tokenResponseJSON = await tokenResponse.json()
   const authToken = 'Token ' + tokenResponseJSON.user.token
-  console.log(authToken)
 
   const newArticleResponse = await request.post('https://conduit-api.bondaracademy.com/api/articles/', {
     data: {
       "article": {
-        "title": "Test Create Article",
+        "title": "Test Create Article For Update",
         "description": "test create article via playwright api",
         "body": "*Test*",
         "tagList": [
@@ -104,9 +99,8 @@ test('Create, Update and Delete Article', async ({ request }) => {
     }
   })
   const newArticleResponseJSON = await newArticleResponse.json()
-  console.log(newArticleResponseJSON)
   expect(newArticleResponse.status()).toEqual(201)
-  expect(newArticleResponseJSON.article.title).toEqual('Test Create Article')
+  expect(newArticleResponseJSON.article.title).toEqual('Test Create Article For Update')
   const slugId = await newArticleResponseJSON.article.slug
 
   const updateArticleResponse = await request.put(`https://conduit-api.bondaracademy.com/api/articles/${slugId}`, {
@@ -139,7 +133,9 @@ test('Create, Update and Delete Article', async ({ request }) => {
   )
   const articleResponseJSON = await articleResponse.json()
   expect(articleResponse.status()).toEqual(200)
-  expect(articleResponseJSON.articles[0].title).toEqual('Test Create Article Modified')
+  expect(articleResponseJSON.articles).toContainEqual(expect.objectContaining({
+    title: "Test Create Article Modified", description: "edit data via playwright api"
+  }))
 
   const deleteResponse = await request.delete(`https://conduit-api.bondaracademy.com/api/articles/${newSlugId}`, {
     headers: {
