@@ -87,7 +87,6 @@ export class RequestHandler {
     for (const [key, value] of Object.entries(this.queryParams)) {
       url.searchParams.append(key, value);
     }
-    console.log(url.toString());
     return url.toString();
   }
 }
