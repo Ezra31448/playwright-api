@@ -1,6 +1,6 @@
 # API Testing Examples
 
-This document provides practical examples of common API testing scenarios using the Playwright API testing framework.
+This document provides practical examples of common API testing scenarios using the Playwright API testing framework with the RequestHandler utility.
 
 ## Table of Contents
 
@@ -10,10 +10,8 @@ This document provides practical examples of common API testing scenarios using 
 4. [CRUD Operations](#crud-operations)
 5. [Error Handling](#error-handling)
 6. [Query Parameters and Filtering](#query-parameters-and-filtering)
-7. [File Upload](#file-upload)
-8. [Pagination Testing](#pagination-testing)
-9. [Rate Limiting Testing](#rate-limiting-testing)
-10. [Concurrent Requests](#concurrent-requests)
+7. [Pagination Testing](#pagination-testing)
+8. [Concurrent Requests](#concurrent-requests)
 
 ## Basic GET Requests
 
@@ -61,14 +59,44 @@ test("should get articles with specific headers", async ({ api }) => {
 });
 ```
 
+### GET Request with Custom URL
+
+```typescript
+test("should use custom base URL", async ({ api }) => {
+  const response = await api
+    .url("https://custom-api.example.com")
+    .path("/articles")
+    .getRequest(200);
+
+  expect(response.articles).toBeDefined();
+});
+```
+
 ## POST Requests with Body Data
 
 ### Creating a Resource
 
 ```typescript
-import { test, request } from "@playwright/test";
+import { test } from "../utils/fixtures";
+import { expect } from "@playwright/test";
 
-test("should create a new article", async ({ request }) => {
+let authToken: string;
+
+test.beforeAll("authenticate user", async ({ api }) => {
+  const tokenResponse = await api
+    .path("/users/login")
+    .body({
+      user: {
+        email: "test@example.com",
+        password: "password123",
+      },
+    })
+    .postRequest(200);
+
+  authToken = "Token " + tokenResponse.user.token;
+});
+
+test("should create a new article", async ({ api }) => {
   const articleData = {
     article: {
       title: "Test Article",
@@ -78,39 +106,38 @@ test("should create a new article", async ({ request }) => {
     },
   };
 
-  const response = await request.post("https://api.example.com/articles", {
-    data: articleData,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: authToken,
-    },
-  });
+  const response = await api
+    .path("/articles")
+    .body(articleData)
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  expect(response.status()).toEqual(201);
-
-  const responseData = await response.json();
-  expect(responseData.article.title).toEqual(articleData.article.title);
-  expect(responseData.article.tagList).toEqual(articleData.article.tagList);
+  expect(response.article.title).toEqual(articleData.article.title);
+  expect(response.article.tagList).toEqual(articleData.article.tagList);
 });
 ```
 
-### POST Request with Form Data
+### POST Request with Complex Body
 
 ```typescript
-test("should submit form data", async ({ request }) => {
-  const formData = new URLSearchParams();
-  formData.append("username", "testuser");
-  formData.append("password", "testpass");
-  formData.append("remember", "true");
-
-  const response = await request.post("https://api.example.com/login", {
-    data: formData.toString(),
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
+test("should create article with complex data", async ({ api }) => {
+  const articleData = {
+    article: {
+      title: "Complex Article",
+      description: "Article with complex structure",
+      body: "# Heading\n\nContent with **markdown**",
+      tagList: ["test", "playwright", "api", "testing"],
     },
-  });
+  };
 
-  expect(response.status()).toEqual(200);
+  const response = await api
+    .path("/articles")
+    .body(articleData)
+    .header({ Authorization: authToken })
+    .postRequest(201);
+
+  expect(response.article.title).toEqual("Complex Article");
+  expect(response.article.tagList.length).toEqual(4);
 });
 ```
 
@@ -119,88 +146,80 @@ test("should submit form data", async ({ request }) => {
 ### Token-Based Authentication
 
 ```typescript
-import { test, request } from "@playwright/test";
+import { test } from "../utils/fixtures";
+import { expect } from "@playwright/test";
 
 let authToken: string;
 
-test.beforeAll("authenticate user", async ({ request }) => {
-  const loginResponse = await request.post(
-    "https://api.example.com/users/login",
-    {
-      data: {
+test.beforeAll("authenticate user", async ({ api }) => {
+  const tokenResponse = await api
+    .path("/users/login")
+    .body({
+      user: {
+        email: "test@example.com",
+        password: "password123",
+      },
+    })
+    .postRequest(200);
+
+  const tokenData = tokenResponse.user.token;
+  authToken = `Token ${tokenData}`;
+
+  expect(authToken).toBeDefined();
+});
+
+test("should access protected resource with token", async ({ api }) => {
+  const response = await api
+    .path("/user")
+    .header({ Authorization: authToken })
+    .getRequest(200);
+
+  expect(response.user.email).toEqual("test@example.com");
+});
+```
+
+### Reusing Authentication Across Tests
+
+```typescript
+test.describe("Authenticated Tests", () => {
+  let authToken: string;
+
+  test.beforeAll("setup authentication", async ({ api }) => {
+    const tokenResponse = await api
+      .path("/users/login")
+      .body({
         user: {
           email: "test@example.com",
           password: "password123",
         },
-      },
-    },
-  );
+      })
+      .postRequest(200);
 
-  const loginData = await loginResponse.json();
-  authToken = `Token ${loginData.user.token}`;
-
-  expect(loginResponse.status()).toEqual(200);
-  expect(authToken).toBeDefined();
-});
-
-test("should access protected resource with token", async ({ request }) => {
-  const response = await request.get("https://api.example.com/user", {
-    headers: {
-      Authorization: authToken,
-    },
+    authToken = "Token " + tokenResponse.user.token;
   });
 
-  expect(response.status()).toEqual(200);
+  test("should get user profile", async ({ api }) => {
+    const response = await api
+      .path("/user")
+      .header({ Authorization: authToken })
+      .getRequest(200);
 
-  const userData = await response.json();
-  expect(userData.user.email).toEqual("test@example.com");
-});
-```
-
-### API Key Authentication
-
-```typescript
-test("should access resource with API key", async ({ request }) => {
-  const response = await request.get("https://api.example.com/data", {
-    headers: {
-      "X-API-Key": "your-api-key-here",
-    },
+    expect(response.user).toBeDefined();
   });
 
-  expect(response.status()).toEqual(200);
-});
-```
+  test("should update user profile", async ({ api }) => {
+    const response = await api
+      .path("/user")
+      .header({ Authorization: authToken })
+      .body({
+        user: {
+          bio: "Updated bio",
+        },
+      })
+      .putRequest(200);
 
-### OAuth2 Authentication
-
-```typescript
-test("should authenticate with OAuth2", async ({ request }) => {
-  // First, get the OAuth token
-  const tokenResponse = await request.post(
-    "https://auth.example.com/oauth/token",
-    {
-      data: {
-        grant_type: "client_credentials",
-        client_id: "your-client-id",
-        client_secret: "your-client-secret",
-      },
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-    },
-  );
-
-  const tokenData = await tokenResponse.json();
-  const accessToken = tokenData.access_token;
-
-  // Use the token to access protected resources
-  const response = await request.get("https://api.example.com/protected", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    expect(response.user.bio).toEqual("Updated bio");
   });
-
-  expect(response.status()).toEqual(200);
 });
 ```
 
@@ -213,12 +232,21 @@ test.describe("Article CRUD Operations", () => {
   let articleSlug: string;
   let authToken: string;
 
-  test.beforeAll("setup authentication", async ({ request }) => {
-    // Authentication setup as shown in previous examples
-    authToken = await getAuthToken(request);
+  test.beforeAll("setup authentication", async ({ api }) => {
+    const tokenResponse = await api
+      .path("/users/login")
+      .body({
+        user: {
+          email: "test@example.com",
+          password: "password123",
+        },
+      })
+      .postRequest(200);
+
+    authToken = "Token " + tokenResponse.user.token;
   });
 
-  test("should create article", async ({ request }) => {
+  test("should create article", async ({ api }) => {
     const articleData = {
       article: {
         title: "CRUD Test Article",
@@ -228,33 +256,25 @@ test.describe("Article CRUD Operations", () => {
       },
     };
 
-    const response = await request.post("https://api.example.com/articles", {
-      data: articleData,
-      headers: { Authorization: authToken },
-    });
+    const response = await api
+      .path("/articles")
+      .body(articleData)
+      .header({ Authorization: authToken })
+      .postRequest(201);
 
-    expect(response.status()).toEqual(201);
+    articleSlug = response.article.slug;
 
-    const createdArticle = (await response.json()).article;
-    articleSlug = createdArticle.slug;
-
-    expect(createdArticle.title).toEqual(articleData.article.title);
+    expect(response.article.title).toEqual(articleData.article.title);
   });
 
-  test("should read article", async ({ request }) => {
-    const response = await request.get(
-      `https://api.example.com/articles/${articleSlug}`,
-      { headers: { Authorization: authToken } },
-    );
+  test("should read article", async ({ api }) => {
+    const response = await api.path(`/articles/${articleSlug}`).getRequest(200);
 
-    expect(response.status()).toEqual(200);
-
-    const article = (await response.json()).article;
-    expect(article.slug).toEqual(articleSlug);
-    expect(article.title).toEqual("CRUD Test Article");
+    expect(response.article.slug).toEqual(articleSlug);
+    expect(response.article.title).toEqual("CRUD Test Article");
   });
 
-  test("should update article", async ({ request }) => {
+  test("should update article", async ({ api }) => {
     const updateData = {
       article: {
         title: "Updated CRUD Test Article",
@@ -262,35 +282,91 @@ test.describe("Article CRUD Operations", () => {
       },
     };
 
-    const response = await request.put(
-      `https://api.example.com/articles/${articleSlug}`,
-      {
-        data: updateData,
-        headers: { Authorization: authToken },
-      },
+    const response = await api
+      .path(`/articles/${articleSlug}`)
+      .body(updateData)
+      .header({ Authorization: authToken })
+      .putRequest(200);
+
+    expect(response.article.title).toEqual(updateData.article.title);
+    expect(response.article.description).toEqual(
+      updateData.article.description,
     );
-
-    expect(response.status()).toEqual(200);
-
-    const updatedArticle = (await response.json()).article;
-    expect(updatedArticle.title).toEqual(updateData.article.title);
-    expect(updatedArticle.description).toEqual(updateData.article.description);
   });
 
-  test("should delete article", async ({ request }) => {
-    const response = await request.delete(
-      `https://api.example.com/articles/${articleSlug}`,
-      { headers: { Authorization: authToken } },
-    );
-
-    expect(response.status()).toEqual(204);
+  test("should delete article", async ({ api }) => {
+    await api
+      .path(`/articles/${articleSlug}`)
+      .header({ Authorization: authToken })
+      .deleteRequest(204);
 
     // Verify deletion
-    const getResponse = await request.get(
-      `https://api.example.com/articles/${articleSlug}`,
-    );
-    expect(getResponse.status()).toEqual(404);
+    const getResponse = await api
+      .path(`/articles/${articleSlug}`)
+      .getRequest(404);
+
+    expect(getResponse.error).toBeDefined();
   });
+});
+```
+
+### Single Test CRUD Operation
+
+```typescript
+test("should perform complete CRUD in one test", async ({ api }) => {
+  let authToken: string;
+
+  // Authenticate
+  const tokenResponse = await api
+    .path("/users/login")
+    .body({
+      user: {
+        email: "test@example.com",
+        password: "password123",
+      },
+    })
+    .postRequest(200);
+
+  authToken = "Token " + tokenResponse.user.token;
+
+  // Create
+  const createResponse = await api
+    .path("/articles")
+    .body({
+      article: {
+        title: "Single Test Article",
+        description: "Created in single test",
+        body: "Test body",
+        tagList: ["test"],
+      },
+    })
+    .header({ Authorization: authToken })
+    .postRequest(201);
+
+  const slug = createResponse.article.slug;
+
+  // Read
+  const getResponse = await api.path(`/articles/${slug}`).getRequest(200);
+  expect(getResponse.article.title).toEqual("Single Test Article");
+
+  // Update
+  const updateResponse = await api
+    .path(`/articles/${slug}`)
+    .body({
+      article: {
+        title: "Updated Single Test Article",
+      },
+    })
+    .header({ Authorization: authToken })
+    .putRequest(200);
+
+  expect(updateResponse.article.title).toEqual("Updated Single Test Article");
+
+  // Delete
+  await api
+    .path(`/articles/${slug}`)
+    .header({ Authorization: authToken })
+    .deleteRequest(204);
 });
 ```
 
@@ -312,20 +388,17 @@ test("should return 404 for non-existent article", async ({ api }) => {
 ### Testing 401 Unauthorized
 
 ```typescript
-test("should return 401 for unauthorized access", async ({ request }) => {
-  const response = await request.get("https://api.example.com/user");
+test("should return 401 for unauthorized access", async ({ api }) => {
+  const response = await api.path("/user").getRequest(401);
 
-  expect(response.status()).toEqual(401);
-
-  const errorData = await response.json();
-  expect(errorData.error).toBeDefined();
+  expect(response.error).toBeDefined();
 });
 ```
 
 ### Testing 400 Bad Request
 
 ```typescript
-test("should return 400 for invalid data", async ({ request }) => {
+test("should return 400 for invalid data", async ({ api }) => {
   const invalidData = {
     article: {
       title: "", // Empty title should cause validation error
@@ -333,16 +406,39 @@ test("should return 400 for invalid data", async ({ request }) => {
     },
   };
 
-  const response = await request.post("https://api.example.com/articles", {
-    data: invalidData,
-    headers: { Authorization: authToken },
-  });
+  const response = await api
+    .path("/articles")
+    .body(invalidData)
+    .header({ Authorization: authToken })
+    .postRequest(400);
 
-  expect(response.status()).toEqual(400);
+  expect(response.errors).toBeDefined();
+  expect(response.errors.title).toBeDefined();
+});
+```
 
-  const errorData = await response.json();
-  expect(errorData.errors).toBeDefined();
-  expect(errorData.errors.title).toBeDefined();
+### Handling Validation Errors
+
+```typescript
+test("should handle multiple validation errors", async ({ api }) => {
+  const invalidData = {
+    article: {
+      title: "", // Empty title
+      description: "", // Empty description
+      body: "", // Empty body
+    },
+  };
+
+  const response = await api
+    .path("/articles")
+    .body(invalidData)
+    .header({ Authorization: authToken })
+    .postRequest(400);
+
+  expect(response.errors).toBeDefined();
+  expect(response.errors.title).toBeDefined();
+  expect(response.errors.description).toBeDefined();
+  expect(response.errors.body).toBeDefined();
 });
 ```
 
@@ -369,87 +465,38 @@ test("should search articles by tag", async ({ api }) => {
 ### Testing Date Range Filtering
 
 ```typescript
-test("should filter articles by date range", async ({ api }) => {
-  const today = new Date();
-  const lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-
+test("should filter articles by author", async ({ api }) => {
   const response = await api
     .path("/articles")
-    .params({
-      from: lastWeek.toISOString().split("T")[0],
-      to: today.toISOString().split("T")[0],
-    })
+    .params({ author: "testuser", limit: 10 })
     .getRequest(200);
 
   expect(response.articles).toBeDefined();
 
-  // Verify all articles are within the date range
+  // Verify all articles are by the specified author
   response.articles.forEach((article) => {
-    const articleDate = new Date(article.createdAt);
-    expect(articleDate).toBeGreaterThanOrEqual(lastWeek);
-    expect(articleDate).toBeLessThanOrEqual(today);
+    expect(article.author.username).toEqual("testuser");
   });
 });
 ```
 
-## File Upload
-
-### Uploading a Single File
+### Testing Multiple Filters
 
 ```typescript
-test("should upload a file", async ({ request }) => {
-  const fileBuffer = fs.readFileSync("./test-files/sample.pdf");
+test("should apply multiple filters", async ({ api }) => {
+  const response = await api
+    .path("/articles")
+    .params({
+      tag: "playwright",
+      limit: 5,
+      offset: 0,
+    })
+    .getRequest(200);
 
-  const response = await request.post("https://api.example.com/upload", {
-    multipart: {
-      file: {
-        name: "sample.pdf",
-        mimeType: "application/pdf",
-        buffer: fileBuffer,
-      },
-      description: "Test file upload",
-    },
+  expect(response.articles.length).toBeLessThanOrEqual(5);
+  response.articles.forEach((article) => {
+    expect(article.tagList).toContain("playwright");
   });
-
-  expect(response.status()).toEqual(201);
-
-  const uploadData = await response.json();
-  expect(uploadData.filename).toEqual("sample.pdf");
-  expect(uploadData.url).toBeDefined();
-});
-```
-
-### Uploading Multiple Files
-
-```typescript
-test("should upload multiple files", async ({ request }) => {
-  const file1Buffer = fs.readFileSync("./test-files/file1.txt");
-  const file2Buffer = fs.readFileSync("./test-files/file2.jpg");
-
-  const response = await request.post(
-    "https://api.example.com/upload-multiple",
-    {
-      multipart: {
-        "files[]": [
-          {
-            name: "file1.txt",
-            mimeType: "text/plain",
-            buffer: file1Buffer,
-          },
-          {
-            name: "file2.jpg",
-            mimeType: "image/jpeg",
-            buffer: file2Buffer,
-          },
-        ],
-      },
-    },
-  );
-
-  expect(response.status()).toEqual(201);
-
-  const uploadData = await response.json();
-  expect(uploadData.files).toHaveLength(2);
 });
 ```
 
@@ -499,169 +546,212 @@ test("should navigate through pages", async ({ api }) => {
 });
 ```
 
-### Testing Edge Cases
+### Testing Pagination Edge Cases
 
 ```typescript
-test.describe("Pagination Edge Cases", () => {
-  test("should handle empty page", async ({ api }) => {
-    const response = await api
-      .path("/articles")
-      .params({ limit: 10, offset: 999999 })
-      .getRequest(200);
+test("should handle pagination edge cases", async ({ api }) => {
+  // Test with limit of 0
+  const emptyResponse = await api
+    .path("/articles")
+    .params({ limit: 0, offset: 0 })
+    .getRequest(200);
 
-    expect(response.articles).toEqual([]);
-    expect(response.articlesCount).toBeGreaterThanOrEqual(0);
-  });
+  expect(emptyResponse.articles.length).toEqual(0);
 
-  test("should handle invalid page size", async ({ api }) => {
-    const response = await api
-      .path("/articles")
-      .params({ limit: -1, offset: 0 })
-      .getRequest(400);
+  // Test with offset beyond available data
+  const beyondResponse = await api
+    .path("/articles")
+    .params({ limit: 10, offset: 999999 })
+    .getRequest(200);
 
-    expect(response.error).toBeDefined();
-  });
-});
-```
-
-## Rate Limiting Testing
-
-### Testing Normal Rate Limits
-
-```typescript
-test("should handle normal request rate", async ({ api }) => {
-  const promises = [];
-
-  // Make 10 requests quickly
-  for (let i = 0; i < 10; i++) {
-    promises.push(api.path("/articles").getRequest(200));
-  }
-
-  const responses = await Promise.all(promises);
-
-  // All should succeed
-  responses.forEach((response) => {
-    expect(response.articles).toBeDefined();
-  });
-});
-```
-
-### Testing Rate Limit Exceeded
-
-```typescript
-test("should handle rate limit exceeded", async ({ api }) => {
-  const promises = [];
-
-  // Make many requests quickly to trigger rate limit
-  for (let i = 0; i < 100; i++) {
-    promises.push(
-      api
-        .path("/articles")
-        .getRequest(200)
-        .catch((error) => error),
-    );
-  }
-
-  const responses = await Promise.all(promises);
-
-  // Some should fail with rate limit error
-  const rateLimitErrors = responses.filter(
-    (response) => response.status && response.status === 429,
-  );
-
-  expect(rateLimitErrors.length).toBeGreaterThan(0);
-
-  // Check rate limit headers
-  const rateLimitError = rateLimitErrors[0];
-  expect(rateLimitError.headers).toHaveProperty("x-ratelimit-limit");
-  expect(rateLimitError.headers).toHaveProperty("x-ratelimit-remaining");
-  expect(rateLimitError.headers).toHaveProperty("x-ratelimit-reset");
+  expect(beyondResponse.articles.length).toEqual(0);
 });
 ```
 
 ## Concurrent Requests
 
-### Testing Concurrent Requests
+### Parallel Requests
 
 ```typescript
-test("should handle concurrent requests", async ({ api }) => {
-  const concurrentRequests = 20;
-  const promises = [];
+test("should handle parallel requests", async ({ api }) => {
+  const [articlesResponse, tagsResponse] = await Promise.all([
+    api.path("/articles").getRequest(200),
+    api.path("/tags").getRequest(200),
+  ]);
 
-  // Create multiple concurrent requests
-  for (let i = 0; i < concurrentRequests; i++) {
-    promises.push(
+  expect(articlesResponse.articles).toBeDefined();
+  expect(tagsResponse.tags).toBeDefined();
+});
+```
+
+### Batch Operations
+
+```typescript
+test("should perform batch operations", async ({ api }) => {
+  const articleIds = ["article-1", "article-2", "article-3"];
+
+  const responses = await Promise.all(
+    articleIds.map((id) =>
       api
-        .path("/articles")
-        .params({ limit: 5, offset: i * 5 })
+        .path(`/articles/${id}`)
+        .header({ Authorization: authToken })
         .getRequest(200),
-    );
-  }
+    ),
+  );
 
-  const startTime = Date.now();
-  const responses = await Promise.all(promises);
-  const endTime = Date.now();
+  responses.forEach((response) => {
+    expect(response.article).toBeDefined();
+  });
+});
+```
 
-  // All requests should succeed
+### Rate Limiting Testing
+
+```typescript
+test("should handle rate limiting", async ({ api }) => {
+  const requests = Array(10)
+    .fill(null)
+    .map(() => api.path("/articles").getRequest(200));
+
+  const responses = await Promise.all(requests);
+
   responses.forEach((response) => {
     expect(response.articles).toBeDefined();
   });
-
-  // Concurrent requests should be faster than sequential
-  const totalTime = endTime - startTime;
-  console.log(
-    `Total time for ${concurrentRequests} concurrent requests: ${totalTime}ms`,
-  );
 });
 ```
 
-### Testing Race Conditions
+## Advanced Examples
+
+### Chained API Calls
 
 ```typescript
-test("should handle concurrent resource creation", async ({ request }) => {
-  const promises = [];
-  const articleData = {
-    article: {
-      title: "Concurrent Test Article",
-      description: "Testing concurrent creation",
-      body: "Article body",
-      tagList: ["concurrent", "test"],
-    },
-  };
+test("should chain API calls", async ({ api }) => {
+  let authToken: string;
 
-  // Create multiple articles concurrently
-  for (let i = 0; i < 5; i++) {
-    promises.push(
-      request.post("https://api.example.com/articles", {
-        data: {
-          ...articleData,
-          article: {
-            ...articleData.article,
-            title: `${articleData.article.title} ${i}`,
-          },
-        },
-        headers: { Authorization: authToken },
-      }),
-    );
-  }
+  // Step 1: Login
+  const loginResponse = await api
+    .path("/users/login")
+    .body({
+      user: {
+        email: "test@example.com",
+        password: "password123",
+      },
+    })
+    .postRequest(200);
 
-  const responses = await Promise.all(promises);
+  authToken = "Token " + loginResponse.user.token;
 
-  // All should succeed
-  responses.forEach((response) => {
-    expect(response.status()).toEqual(201);
-  });
+  // Step 2: Create article
+  const createResponse = await api
+    .path("/articles")
+    .body({
+      article: {
+        title: "Chained Article",
+        description: "Created through chained calls",
+        body: "Test body",
+        tagList: ["test"],
+      },
+    })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  // Verify all articles were created with unique titles
-  const createdArticles = await Promise.all(
-    responses.map((response) => response.json()),
-  );
+  const slug = createResponse.article.slug;
 
-  const titles = createdArticles.map((data) => data.article.title);
-  const uniqueTitles = [...new Set(titles)];
+  // Step 3: Favorite the article
+  const favoriteResponse = await api
+    .path(`/articles/${slug}/favorite`)
+    .header({ Authorization: authToken })
+    .postRequest(200);
 
-  expect(titles.length).toEqual(uniqueTitles.length);
+  expect(favoriteResponse.article.favorited).toBe(true);
+
+  // Step 4: Unfavorite
+  const unfavoriteResponse = await api
+    .path(`/articles/${slug}/favorite`)
+    .header({ Authorization: authToken })
+    .deleteRequest(200);
+
+  expect(unfavoriteResponse.article.favorited).toBe(false);
+
+  // Step 5: Delete article
+  await api
+    .path(`/articles/${slug}`)
+    .header({ Authorization: authToken })
+    .deleteRequest(204);
 });
 ```
 
-These examples cover a wide range of common API testing scenarios. You can adapt them to your specific API endpoints and requirements. Remember to replace the example URLs, data structures, and authentication methods with those that match your actual API.
+### Conditional API Calls
+
+```typescript
+test("should make conditional API calls", async ({ api }) => {
+  // Get articles
+  const response = await api
+    .path("/articles")
+    .params({ limit: 1 })
+    .getRequest(200);
+
+  // Check if articles exist
+  if (response.articles.length > 0) {
+    const article = response.articles[0];
+
+    // Get full article details
+    const detailResponse = await api
+      .path(`/articles/${article.slug}`)
+      .getRequest(200);
+
+    expect(detailResponse.article.slug).toEqual(article.slug);
+  }
+});
+```
+
+### Retry Pattern
+
+```typescript
+test("should retry failed requests", async ({ api }) => {
+  const maxRetries = 3;
+  let attempts = 0;
+  let response;
+
+  while (attempts < maxRetries) {
+    try {
+      response = await api.path("/articles").getRequest(200);
+      break; // Success, exit loop
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxRetries) {
+        throw error; // Re-throw after max retries
+      }
+      // Wait before retrying
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+
+  expect(response.articles).toBeDefined();
+});
+```
+
+## Testing with Real API
+
+The examples in this document use the Conduit API (https://conduit-api.bondaracademy.com/api) which is a real API used for testing. When adapting these examples for your own API:
+
+1. Update the base URL in [`utils/fixtures.ts`](../utils/fixtures.ts:11)
+2. Adjust the authentication flow to match your API
+3. Modify request/response structures to match your API's schema
+4. Update test data to be valid for your API
+
+Example of updating the base URL:
+
+```typescript
+// utils/fixtures.ts
+export const test = base.extend<TestOptions>({
+  api: async ({ request }, use) => {
+    const baseUrl: string =
+      process.env.API_BASE_URL || "https://your-api.example.com/api";
+    const logger = new APILogger();
+    const requestHandler = new RequestHandler(request, baseUrl, logger);
+    await use(requestHandler);
+  },
+});
+```

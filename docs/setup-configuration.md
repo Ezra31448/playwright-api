@@ -27,8 +27,8 @@ npm install
 
 This will install:
 
-- `@playwright/test`: The Playwright testing framework
-- `@types/node`: TypeScript type definitions for Node.js
+- `@playwright/test`: The Playwright testing framework (v1.58.0)
+- `@types/node`: TypeScript type definitions for Node.js (v25.0.10)
 
 ### 3. Install Playwright Browsers
 
@@ -42,7 +42,7 @@ npx playwright install
 
 ### Playwright Configuration
 
-The framework is configured through `playwright.config.ts`. Here's an overview of the key settings:
+The framework is configured through [`playwright.config.ts`](../playwright.config.ts:1). Here's an overview of the key settings:
 
 ```typescript
 import { defineConfig, devices } from "@playwright/test";
@@ -129,9 +129,9 @@ Create a `.env` file in the root directory for environment-specific configuratio
 
 ```bash
 # .env file
-API_BASE_URL=https://api.example.com
-API_USERNAME=testuser
-API_PASSWORD=testpass
+API_BASE_URL=https://conduit-api.bondaracademy.com/api
+API_USERNAME=your-email@example.com
+API_PASSWORD=your-password
 CI=false
 ```
 
@@ -141,7 +141,7 @@ Note: To use environment variables in your configuration, you'll need to install
 npm install dotenv
 ```
 
-Then update `playwright.config.ts`:
+Then update [`playwright.config.ts`](../playwright.config.ts:1):
 
 ```typescript
 import { defineConfig } from "@playwright/test";
@@ -163,7 +163,7 @@ export default defineConfig({
 
 ### RequestHandler Configuration
 
-The `RequestHandler` is configured in `utils/fixtures.ts`. You can customize it for your needs:
+The `RequestHandler` is configured in [`utils/fixtures.ts`](../utils/fixtures.ts:1). You can customize it for your needs:
 
 #### Changing the Base URL
 
@@ -174,7 +174,8 @@ export const test = base.extend<TestOptions>({
     // Use environment variable or default
     const baseUrl: string =
       process.env.API_BASE_URL || "https://conduit-api.bondaracademy.com/api";
-    const requestHandler = new RequestHandler(request, baseUrl);
+    const logger = new APILogger();
+    const requestHandler = new RequestHandler(request, baseUrl, logger);
     await use(requestHandler);
   },
 });
@@ -187,15 +188,17 @@ export const test = base.extend<TestOptions>({
 export const test = base.extend<TestOptions>({
   api: async ({ request }, use) => {
     const baseUrl: string =
-      process.env.API_BASE_URL || "https://api.example.com";
-    const requestHandler = new RequestHandler(request, baseUrl);
+      process.env.API_BASE_URL || "https://conduit-api.bondaracademy.com/api";
+    const logger = new APILogger();
+    const requestHandler = new RequestHandler(request, baseUrl, logger);
     await use(requestHandler);
   },
 
   authenticatedApi: async ({ request }, use) => {
     const baseUrl: string =
-      process.env.API_BASE_URL || "https://api.example.com";
-    const requestHandler = new RequestHandler(request, baseUrl);
+      process.env.API_BASE_URL || "https://conduit-api.bondaracademy.com/api";
+    const logger = new APILogger();
+    const requestHandler = new RequestHandler(request, baseUrl, logger);
 
     // Authenticate
     const loginResponse = await request.post(`${baseUrl}/users/login`, {
@@ -210,6 +213,50 @@ export const test = base.extend<TestOptions>({
     const token = (await loginResponse.json()).user.token;
     requestHandler.header({ Authorization: `Token ${token}` });
 
+    await use(requestHandler);
+  },
+});
+```
+
+### APILogger Configuration
+
+The `APILogger` is automatically initialized in the fixtures. You can customize logging behavior by creating a custom logger:
+
+```typescript
+// utils/custom-logger.ts
+import { APILogger } from "./logger";
+
+export class CustomLogger extends APILogger {
+  logRequest(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body?: any,
+  ) {
+    // Custom logging logic
+    console.log(`[${new Date().toISOString()}] ${method} ${url}`);
+    super.logRequest(method, url, headers, body);
+  }
+
+  logResponse(status: number, body?: any) {
+    // Custom logging logic
+    console.log(`[${new Date().toISOString()}] Status: ${status}`);
+    super.logResponse(status, body);
+  }
+}
+```
+
+Then use it in your fixtures:
+
+```typescript
+// utils/fixtures.ts
+import { CustomLogger } from "./custom-logger";
+
+export const test = base.extend<TestOptions>({
+  api: async ({ request }, use) => {
+    const baseUrl: string = "https://conduit-api.bondaracademy.com/api";
+    const logger = new CustomLogger(); // Use custom logger
+    const requestHandler = new RequestHandler(request, baseUrl, logger);
     await use(requestHandler);
   },
 });
@@ -433,6 +480,7 @@ pipeline {
 
 4. **Test timeouts**:
    - Increase timeout in `playwright.config.ts`:
+
    ```typescript
    export default defineConfig({
      timeout: 30000, // 30 seconds
@@ -442,6 +490,10 @@ pipeline {
      // ... other config
    });
    ```
+
+5. **Status code validation errors with missing logs**:
+   - Ensure APILogger is properly initialized in fixtures
+   - Check that the logger is passed to RequestHandler constructor
 
 ### Debugging Tips
 
@@ -464,6 +516,73 @@ pipeline {
    ```
 
 4. Run a single test to isolate issues:
+
    ```bash
    npx playwright test --grep "specific test name"
    ```
+
+5. View detailed API logs in error messages:
+   - When a status code validation fails, the error message includes recent API activity
+   - This includes request method, URL, headers, body, and response status/body
+   - Use these logs to debug API interaction issues
+
+## Advanced Configuration
+
+### Custom Test Timeout
+
+```typescript
+export default defineConfig({
+  timeout: 60000, // 60 seconds default timeout
+  expect: {
+    timeout: 5000, // 5 seconds for assertions
+  },
+  // ... other config
+});
+```
+
+### Parallel Test Execution
+
+```typescript
+export default defineConfig({
+  fullyParallel: true,
+  workers: 4, // Run 4 tests in parallel
+  // ... other config
+});
+```
+
+### Retry Configuration
+
+```typescript
+export default defineConfig({
+  retries: 3, // Retry failed tests up to 3 times
+  // ... other config
+});
+```
+
+### Global Setup and Teardown
+
+```typescript
+export default defineConfig({
+  globalSetup: require.resolve("./global-setup"),
+  globalTeardown: require.resolve("./global-teardown"),
+  // ... other config
+});
+```
+
+Create `global-setup.ts`:
+
+```typescript
+export default async function globalSetup() {
+  console.log("Global setup - runs before all tests");
+  // Setup database, start services, etc.
+}
+```
+
+Create `global-teardown.ts`:
+
+```typescript
+export default async function globalTeardown() {
+  console.log("Global teardown - runs after all tests");
+  // Cleanup database, stop services, etc.
+}
+```

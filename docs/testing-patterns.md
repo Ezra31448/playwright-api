@@ -12,6 +12,7 @@ This guide covers recommended patterns and best practices for API testing using 
 6. [Test Isolation](#test-isolation)
 7. [Assertion Strategies](#assertion-strategies)
 8. [Performance Considerations](#performance-considerations)
+9. [Logging and Debugging](#logging-and-debugging)
 
 ## Test Organization
 
@@ -77,7 +78,7 @@ let authToken: string;
 
 test.beforeAll("Setup authentication", async ({ request }) => {
   const loginResponse = await request.post(
-    "https://api.example.com/users/login",
+    "https://conduit-api.bondaracademy.com/api/users/login",
     {
       data: {
         user: {
@@ -107,11 +108,14 @@ export async function authenticateUser(
   email: string,
   password: string,
 ): Promise<string> {
-  const response = await request.post("https://api.example.com/users/login", {
-    data: {
-      user: { email, password },
+  const response = await request.post(
+    "https://conduit-api.bondaracademy.com/api/users/login",
+    {
+      data: {
+        user: { email, password },
+      },
     },
-  });
+  );
 
   const data = await response.json();
   return `Token ${data.user.token}`;
@@ -127,6 +131,39 @@ test.beforeAll("Setup authentication", async ({ request }) => {
 });
 ```
 
+### Use RequestHandler for Authentication
+
+The RequestHandler provides a fluent interface for authentication:
+
+```typescript
+import { test } from "../utils/fixtures";
+
+let authToken: string;
+
+test.beforeAll("Setup authentication", async ({ api }) => {
+  const tokenResponse = await api
+    .path("/users/login")
+    .body({
+      user: {
+        email: "test@example.com",
+        password: "password123",
+      },
+    })
+    .postRequest(200);
+
+  authToken = "Token " + tokenResponse.user.token;
+});
+
+test("should access protected resource", async ({ api }) => {
+  const response = await api
+    .path("/user")
+    .header({ Authorization: authToken })
+    .getRequest(200);
+
+  expect(response.user).toBeDefined();
+});
+```
+
 ## Request/Response Validation
 
 ### Validate Status Codes First
@@ -134,18 +171,16 @@ test.beforeAll("Setup authentication", async ({ request }) => {
 Always validate status codes before checking response body:
 
 ```typescript
-test("should create article successfully", async ({ request }) => {
-  const response = await request.post("https://api.example.com/articles", {
-    data: { article: { title: "Test Article" } },
-    headers: { Authorization: authToken },
-  });
+test("should create article successfully", async ({ api }) => {
+  const response = await api
+    .path("/articles")
+    .body({ article: { title: "Test Article" } })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  // Validate status first
-  expect(response.status()).toEqual(201);
-
-  // Then validate body
-  const responseData = await response.json();
-  expect(responseData.article.title).toEqual("Test Article");
+  // Status is automatically validated by RequestHandler
+  // Now validate body
+  expect(response.article.title).toEqual("Test Article");
 });
 ```
 
@@ -176,25 +211,21 @@ test("should return valid article structure", async ({ api }) => {
 For complex objects, validate only the properties you care about:
 
 ```typescript
-test("should create article with expected properties", async ({ request }) => {
-  const createResponse = await request.post(
-    "https://api.example.com/articles",
-    {
-      data: {
-        article: {
-          title: "Test Article",
-          description: "Test Description",
-          body: "Test Body",
-          tagList: ["test", "example"],
-        },
+test("should create article with expected properties", async ({ api }) => {
+  const response = await api
+    .path("/articles")
+    .body({
+      article: {
+        title: "Test Article",
+        description: "Test Description",
+        body: "Test Body",
+        tagList: ["test", "example"],
       },
-      headers: { Authorization: authToken },
-    },
-  );
+    })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  const createdArticle = (await createResponse.json()).article;
-
-  expect(createdArticle).toEqual(
+  expect(response.article).toEqual(
     expect.objectContaining({
       title: "Test Article",
       description: "Test Description",
@@ -226,18 +257,19 @@ export function createArticleData(overrides = {}) {
 }
 
 // Usage in tests
-test("should create article with custom title", async ({ request }) => {
+test("should create article with custom title", async ({ api }) => {
   const articleData = createArticleData({
     title: "Custom Title Article",
     tagList: ["custom", "test"],
   });
 
-  const response = await request.post("https://api.example.com/articles", {
-    data: { article: articleData },
-    headers: { Authorization: authToken },
-  });
+  const response = await api
+    .path("/articles")
+    .body({ article: articleData })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  expect(response.status()).toEqual(201);
+  expect(response.status).toEqual(201);
 });
 ```
 
@@ -246,28 +278,55 @@ test("should create article with custom title", async ({ request }) => {
 Always clean up created data to avoid test pollution:
 
 ```typescript
-test("should create and delete article", async ({ request }) => {
+test("should create and delete article", async ({ api }) => {
   // Create article
-  const createResponse = await request.post(
-    "https://api.example.com/articles",
-    {
-      data: { article: createArticleData() },
-      headers: { Authorization: authToken },
-    },
-  );
+  const createResponse = await api
+    .path("/articles")
+    .body({ article: createArticleData() })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  const slug = (await createResponse.json()).article.slug;
+  const slug = createResponse.article.slug;
 
   // Verify creation
-  expect(createResponse.status()).toEqual(201);
+  expect(createResponse.article.title).toBeDefined();
 
   // Clean up
-  const deleteResponse = await request.delete(
-    `https://api.example.com/articles/${slug}`,
-    { headers: { Authorization: authToken } },
-  );
+  await api
+    .path(`/articles/${slug}`)
+    .header({ Authorization: authToken })
+    .deleteRequest(204);
+});
+```
 
-  expect(deleteResponse.status()).toEqual(204);
+### Use afterEach for Cleanup
+
+For consistent cleanup across tests:
+
+```typescript
+test.describe("Article Management", () => {
+  let articleSlug: string;
+
+  test.afterEach("Cleanup", async ({ api }) => {
+    if (articleSlug) {
+      await api
+        .path(`/articles/${articleSlug}`)
+        .header({ Authorization: authToken })
+        .deleteRequest(204);
+      articleSlug = "";
+    }
+  });
+
+  test("should create article", async ({ api }) => {
+    const response = await api
+      .path("/articles")
+      .body({ article: createArticleData() })
+      .header({ Authorization: authToken })
+      .postRequest(201);
+
+    articleSlug = response.article.slug;
+    expect(response.article.title).toBeDefined();
+  });
 });
 ```
 
@@ -281,7 +340,7 @@ Explicitly test error conditions:
 test.describe("Error Handling", () => {
   test("should return 401 for unauthorized access", async ({ api }) => {
     // Try to access protected resource without auth
-    const response = await api.path("/user/profile").getRequest(401);
+    const response = await api.path("/user").getRequest(401);
   });
 
   test("should return 404 for non-existent resource", async ({ api }) => {
@@ -290,16 +349,14 @@ test.describe("Error Handling", () => {
       .getRequest(404);
   });
 
-  test("should return 400 for invalid data", async ({ request }) => {
-    const response = await request.post("https://api.example.com/articles", {
-      data: { article: { title: "" } }, // Invalid: empty title
-      headers: { Authorization: authToken },
-    });
+  test("should return 400 for invalid data", async ({ api }) => {
+    const response = await api
+      .path("/articles")
+      .body({ article: { title: "" } }) // Invalid: empty title
+      .header({ Authorization: authToken })
+      .postRequest(400);
 
-    expect(response.status()).toEqual(400);
-
-    const errorData = await response.json();
-    expect(errorData.errors).toBeDefined();
+    expect(response.errors).toBeDefined();
   });
 });
 ```
@@ -321,6 +378,43 @@ test("should return properly formatted error", async ({ api }) => {
 });
 ```
 
+### Leverage Built-in Error Messages
+
+The RequestHandler provides detailed error messages including recent API logs:
+
+```typescript
+test("should handle API errors gracefully", async ({ api }) => {
+  try {
+    await api.path("/non-existent").getRequest(200);
+  } catch (error) {
+    // Error message includes:
+    // - Expected vs actual status code
+    // - Recent API activity logs
+    console.error(error.message);
+  }
+});
+```
+
+Example error message:
+
+```
+Expected status 200 but got 404
+
+Recent API Activity:
+===Request Details===
+{
+    "method": "GET",
+    "url": "https://conduit-api.bondaracademy.com/api/non-existent",
+    "headers": {}
+}
+
+===Response Details===
+{
+    "status": 404,
+    "body": { "error": "Not Found" }
+}
+```
+
 ## Test Isolation
 
 ### Avoid Test Dependencies
@@ -329,42 +423,55 @@ Tests should be independent and not rely on other tests:
 
 ```typescript
 // Bad: Test depends on previous test creating data
-test("should create article", async ({ request }) => {
+test("should create article", async ({ api }) => {
   // Creates article with slug "test-article"
 });
 
-test("should update article", async ({ request }) => {
+test("should update article", async ({ api }) => {
   // Assumes article with slug "test-article" exists
   // This is fragile!
 });
 
 // Good: Each test is self-contained
-test("should create and update article", async ({ request }) => {
+test("should create and update article", async ({ api }) => {
   // Create article
-  const createResponse = await request.post(
-    "https://api.example.com/articles",
-    {
-      data: { article: createArticleData() },
-      headers: { Authorization: authToken },
-    },
-  );
+  const createResponse = await api
+    .path("/articles")
+    .body({ article: createArticleData() })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  const slug = (await createResponse.json()).article.slug;
+  const slug = createResponse.article.slug;
 
   // Update the same article
-  const updateResponse = await request.put(
-    `https://api.example.com/articles/${slug}`,
-    {
-      data: { article: { title: "Updated Title" } },
-      headers: { Authorization: authToken },
-    },
-  );
+  const updateResponse = await api
+    .path(`/articles/${slug}`)
+    .body({ article: { title: "Updated Title" } })
+    .header({ Authorization: authToken })
+    .putRequest(200);
 
-  expect(updateResponse.status()).toEqual(200);
+  expect(updateResponse.article.title).toEqual("Updated Title");
 
   // Clean up
-  await request.delete(`https://api.example.com/articles/${slug}`, {
-    headers: { Authorization: authToken },
+  await api
+    .path(`/articles/${slug}`)
+    .header({ Authorization: authToken })
+    .deleteRequest(204);
+});
+```
+
+### Use beforeEach for Fresh State
+
+Ensure each test starts with a clean state:
+
+```typescript
+test.describe("Article Tests", () => {
+  test.beforeEach("Reset state", async ({ api }) => {
+    // Reset any test state before each test
+  });
+
+  test("should create article", async ({ api }) => {
+    // Test with clean state
   });
 });
 ```
@@ -414,11 +521,21 @@ For setup that needs to run before each test:
 test.describe("Performance Tests", () => {
   let authToken: string;
 
-  test.beforeAll("Setup auth", async ({ request }) => {
-    authToken = await authenticateUser(request, "test@example.com", "password");
+  test.beforeAll("Setup auth", async ({ api }) => {
+    const tokenResponse = await api
+      .path("/users/login")
+      .body({
+        user: {
+          email: "test@example.com",
+          password: "password",
+        },
+      })
+      .postRequest(200);
+
+    authToken = "Token " + tokenResponse.user.token;
   });
 
-  test.beforeEach("Reset test state", async ({ request }) => {
+  test.beforeEach("Reset test state", async ({ api }) => {
     // Reset any test state before each test
   });
 
@@ -457,3 +574,120 @@ test("should handle huge response", async ({ api }) => {
     .getRequest(200);
 });
 ```
+
+## Logging and Debugging
+
+### Automatic Request/Response Logging
+
+The RequestHandler automatically logs all requests and responses through the APILogger:
+
+```typescript
+test("should log API activity", async ({ api }) => {
+  // This request is automatically logged
+  const response = await api
+    .path("/articles")
+    .params({ limit: 10 })
+    .getRequest(200);
+
+  // If an error occurs, recent logs are included in the error message
+});
+```
+
+### Accessing Logs for Debugging
+
+When a test fails, the error message includes recent API activity:
+
+```typescript
+test("should demonstrate error logging", async ({ api }) => {
+  try {
+    // This will fail with 404
+    await api.path("/non-existent").getRequest(200);
+  } catch (error) {
+    // Error message includes detailed logs
+    console.error(error.message);
+    // Output:
+    // Expected status 200 but got 404
+    //
+    // Recent API Activity:
+    // ===Request Details===
+    // {
+    //   "method": "GET",
+    //   "url": "https://conduit-api.bondaracademy.com/api/non-existent",
+    //   "headers": {}
+    // }
+    //
+    // ===Response Details===
+    // {
+    //   "status": 404,
+    //   "body": { "error": "Not Found" }
+    // }
+  }
+});
+```
+
+### Using Logs for Test Debugging
+
+Logs are particularly useful for debugging complex test scenarios:
+
+```typescript
+test("should debug complex API interaction", async ({ api }) => {
+  let articleSlug: string;
+
+  // Create article
+  const createResponse = await api
+    .path("/articles")
+    .body({ article: createArticleData() })
+    .header({ Authorization: authToken })
+    .postRequest(201);
+
+  articleSlug = createResponse.article.slug;
+
+  // Update article
+  const updateResponse = await api
+    .path(`/articles/${articleSlug}`)
+    .body({ article: { title: "Updated" } })
+    .header({ Authorization: authToken })
+    .putRequest(200);
+
+  // If any step fails, you'll see all previous requests and responses
+});
+```
+
+### Custom Logging
+
+You can extend the APILogger for custom logging behavior:
+
+```typescript
+// utils/custom-logger.ts
+import { APILogger } from "./logger";
+
+export class CustomLogger extends APILogger {
+  logRequest(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body?: any,
+  ) {
+    console.log(`[${new Date().toISOString()}] ${method} ${url}`);
+    super.logRequest(method, url, headers, body);
+  }
+
+  logResponse(status: number, body?: any) {
+    console.log(`[${new Date().toISOString()}] Status: ${status}`);
+    super.logResponse(status, body);
+  }
+}
+```
+
+## Best Practices Summary
+
+1. **Organize tests logically**: Group related tests using `test.describe()`
+2. **Use descriptive names**: Make test names clear and specific
+3. **Authenticate properly**: Set up authentication in `beforeAll` or use fixtures
+4. **Validate responses**: Check status codes first, then structure, then values
+5. **Clean up data**: Always clean up created resources to avoid test pollution
+6. **Test error cases**: Explicitly test error scenarios and edge cases
+7. **Keep tests isolated**: Each test should be independent and self-contained
+8. **Use specific assertions**: Use the most specific assertion for your needs
+9. **Leverage logging**: The built-in APILogger provides detailed error messages
+10. **Mind performance**: Use reasonable test data sizes and efficient patterns

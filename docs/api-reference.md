@@ -1,11 +1,22 @@
-# API Reference: RequestHandler Class
+# API Reference
 
-The `RequestHandler` class is a utility wrapper around Playwright's `APIRequestContext` that provides a fluent interface for building and executing HTTP requests.
+This document provides detailed API reference for the core classes in the Playwright API testing framework.
 
-## Constructor
+## Table of Contents
+
+1. [RequestHandler Class](#requesthandler-class)
+2. [APILogger Class](#apilogger-class)
+
+---
+
+## RequestHandler Class
+
+The [`RequestHandler`](../utils/request-handler.ts:5) class is a utility wrapper around Playwright's `APIRequestContext` that provides a fluent interface for building and executing HTTP requests with built-in logging and status code validation.
+
+### Constructor
 
 ```typescript
-constructor(request: APIRequestContext, apiBaseUrl: string)
+constructor(request: APIRequestContext, apiBaseUrl: string, logger: APILogger)
 ```
 
 Creates a new instance of the RequestHandler.
@@ -14,10 +25,21 @@ Creates a new instance of the RequestHandler.
 
 - `request`: Playwright's APIRequestContext instance
 - `apiBaseUrl`: Base URL for all API requests
+- `logger`: APILogger instance for logging requests and responses
 
-## Methods
+**Example:**
 
-### url(url: string)
+```typescript
+import { RequestHandler } from "../utils/request-handler";
+import { APILogger } from "../utils/logger";
+
+const logger = new APILogger();
+const handler = new RequestHandler(request, "https://api.example.com", logger);
+```
+
+### Methods
+
+#### url(url: string)
 
 Sets the base URL for the current request. If not set, uses the default base URL from the constructor.
 
@@ -30,11 +52,11 @@ Sets the base URL for the current request. If not set, uses the default base URL
 **Example:**
 
 ```typescript
-const handler = new RequestHandler(request, "https://api.example.com");
+const handler = new RequestHandler(request, "https://api.example.com", logger);
 handler.url("https://custom-api.example.com");
 ```
 
-### path(path: string)
+#### path(path: string)
 
 Sets the API path to append to the base URL.
 
@@ -50,7 +72,7 @@ Sets the API path to append to the base URL.
 api.path("/articles").getRequest(200);
 ```
 
-### params(params: object)
+#### params(params: object)
 
 Sets query parameters for the request.
 
@@ -69,7 +91,7 @@ api
   .getRequest(200);
 ```
 
-### header(headers: Record<string, string>)
+#### header(headers: Record<string, string>)
 
 Sets headers for the request.
 
@@ -91,7 +113,7 @@ api
   .getRequest(200);
 ```
 
-### body(body: object)
+#### body(body: object)
 
 Sets the request body for POST, PUT, and PATCH requests.
 
@@ -107,22 +129,26 @@ Sets the request body for POST, PUT, and PATCH requests.
 api
   .path("/articles")
   .body({
-    title: "New Article",
-    content: "Article content",
-    tags: ["test", "example"],
+    article: {
+      title: "New Article",
+      content: "Article content",
+      tags: ["test", "example"],
+    },
   })
-  .postRequest(201); // Note: postRequest needs to be implemented
+  .postRequest(201);
 ```
 
-### getRequest(statusCode: number)
+#### getRequest(expectedStatusCode: number)
 
 Executes a GET request and validates the response status code.
 
 **Parameters:**
 
-- `statusCode`: Expected HTTP status code (for validation)
+- `expectedStatusCode`: Expected HTTP status code (for validation)
 
 **Returns:** Promise resolving to the JSON response body
+
+**Throws:** Error if status code doesn't match expected value (includes recent API logs)
 
 **Example:**
 
@@ -134,6 +160,196 @@ const response = await api
 
 console.log(response.articles); // Access response data
 ```
+
+#### postRequest(expectedStatusCode: number)
+
+Executes a POST request and validates the response status code.
+
+**Parameters:**
+
+- `expectedStatusCode`: Expected HTTP status code (for validation)
+
+**Returns:** Promise resolving to the JSON response body
+
+**Throws:** Error if status code doesn't match expected value (includes recent API logs)
+
+**Example:**
+
+```typescript
+const response = await api
+  .path("/articles")
+  .body({
+    article: {
+      title: "New Article",
+      description: "Article description",
+      body: "Article body",
+      tagList: ["test"],
+    },
+  })
+  .postRequest(201);
+
+console.log(response.article.slug); // Access created resource
+```
+
+#### putRequest(expectedStatusCode: number)
+
+Executes a PUT request and validates the response status code.
+
+**Parameters:**
+
+- `expectedStatusCode`: Expected HTTP status code (for validation)
+
+**Returns:** Promise resolving to the JSON response body
+
+**Throws:** Error if status code doesn't match expected value (includes recent API logs)
+
+**Example:**
+
+```typescript
+const response = await api
+  .path("/articles/test-article-slug")
+  .body({
+    article: {
+      title: "Updated Title",
+      description: "Updated description",
+    },
+  })
+  .putRequest(200);
+
+console.log(response.article.title); // Access updated resource
+```
+
+#### deleteRequest(expectedStatusCode: number)
+
+Executes a DELETE request and validates the response status code.
+
+**Parameters:**
+
+- `expectedStatusCode`: Expected HTTP status code (for validation)
+
+**Returns:** Promise resolving to the JSON response body (or null for 204 No Content)
+
+**Throws:** Error if status code doesn't match expected value (includes recent API logs)
+
+**Example:**
+
+```typescript
+await api
+  .path("/articles/test-article-slug")
+  .deleteRequest(204);
+
+// Resource is now deleted
+```
+
+### Private Methods
+
+#### getUrl()
+
+Constructs the complete URL by combining base URL, path, and query parameters.
+
+**Returns:** Complete URL string
+
+#### statusCodeValidator(actualStatus: number, expectedStatus: number, callingMethod: Function)
+
+Validates that the actual status code matches the expected status code. Throws an error with recent API logs if they don't match.
+
+**Parameters:**
+
+- `actualStatus`: The actual HTTP status code received
+- `expectedStatus`: The expected HTTP status code
+- `callingMethod`: The method that called the validator (for stack trace)
+
+**Throws:** Error with detailed message including recent API activity logs
+
+---
+
+## APILogger Class
+
+The [`APILogger`](../utils/logger.ts:1) class provides logging capabilities for API requests and responses, enabling detailed tracking of API activity and improved error reporting.
+
+### Constructor
+
+```typescript
+constructor()
+```
+
+Creates a new instance of the APILogger.
+
+**Example:**
+
+```typescript
+import { APILogger } from "../utils/logger";
+
+const logger = new APILogger();
+```
+
+### Methods
+
+#### logRequest(method: string, url: string, headers: Record<string, string>, body?: any)
+
+Logs an API request with method, URL, headers, and optional body.
+
+**Parameters:**
+
+- `method`: HTTP method (GET, POST, PUT, DELETE, etc.)
+- `url`: The complete URL of the request
+- `headers`: Request headers
+- `body`: Optional request body (for POST, PUT, DELETE requests)
+
+**Example:**
+
+```typescript
+logger.logRequest(
+  "POST",
+  "https://api.example.com/articles",
+  { "Content-Type": "application/json", Authorization: "Bearer token" },
+  { article: { title: "Test" } }
+);
+```
+
+#### logResponse(status: number, body?: any)
+
+Logs an API response with status code and optional body.
+
+**Parameters:**
+
+- `status`: HTTP status code
+- `body`: Optional response body
+
+**Example:**
+
+```typescript
+logger.logResponse(201, { article: { id: 1, title: "Test" } });
+logger.logResponse(204); // No body for 204 No Content
+```
+
+#### getRecentLogs()
+
+Returns a formatted string of all recent API activity logs.
+
+**Returns:** Formatted string containing all logged requests and responses
+
+**Example:**
+
+```typescript
+const logs = logger.getRecentLogs();
+console.log(logs);
+// Output:
+// ===Request Details===
+// {
+//     "method": "GET",
+//     "url": "https://api.example.com/articles",
+//     "headers": { "Authorization": "Bearer token" }
+// }
+//
+// ===Response Details===
+// {
+//     "status": 200,
+//     "body": { "articles": [...] }
+// }
+```
+
+---
 
 ## Usage Examples
 
@@ -152,16 +368,62 @@ test("Get all articles", async ({ api }) => {
 });
 ```
 
-### GET Request with Headers
+### POST Request with Authentication
 
 ```typescript
-test("Get protected resource", async ({ api }) => {
+test("Create article", async ({ api }) => {
   const response = await api
-    .path("/user/profile")
-    .header({ Authorization: "Bearer your-token-here" })
-    .getRequest(200);
+    .path("/articles")
+    .header({
+      Authorization: "Token your-auth-token",
+    })
+    .body({
+      article: {
+        title: "New Article",
+        description: "Article description",
+        body: "Article body",
+        tagList: ["test"],
+      },
+    })
+    .postRequest(201);
 
-  expect(response.user.email).toBeDefined();
+  expect(response.article.title).toEqual("New Article");
+});
+```
+
+### PUT Request to Update Resource
+
+```typescript
+test("Update article", async ({ api }) => {
+  const response = await api
+    .path("/articles/article-slug")
+    .header({
+      Authorization: "Token your-auth-token",
+    })
+    .body({
+      article: {
+        title: "Updated Title",
+        description: "Updated description",
+      },
+    })
+    .putRequest(200);
+
+  expect(response.article.title).toEqual("Updated Title");
+});
+```
+
+### DELETE Request
+
+```typescript
+test("Delete article", async ({ api }) => {
+  await api
+    .path("/articles/article-slug")
+    .header({
+      Authorization: "Token your-auth-token",
+    })
+    .deleteRequest(204);
+
+  // Resource is deleted
 });
 ```
 
@@ -185,55 +447,67 @@ test("Complex API request", async ({ api }) => {
 });
 ```
 
-## Current Limitations
+---
 
-The current implementation of `RequestHandler` only includes the `getRequest` method. To fully utilize the fluent interface, you may want to extend it with additional HTTP methods:
+## Error Handling
+
+When a status code validation fails, the RequestHandler throws an error that includes recent API activity logs for debugging:
 
 ```typescript
-// Example of what could be added:
-async postRequest(expectedStatusCode: number) {
-  const url = this.getUrl();
-  const response = await this.request.post(url, {
-    headers: this.apiHeaders,
-    data: this.apiBody,
-  });
-  expect(response.status()).toEqual(expectedStatusCode);
-  return await response.json();
-}
-
-async putRequest(expectedStatusCode: number) {
-  const url = this.getUrl();
-  const response = await this.request.put(url, {
-    headers: this.apiHeaders,
-    data: this.apiBody,
-  });
-  expect(response.status()).toEqual(expectedStatusCode);
-  return await response.json();
-}
-
-async deleteRequest(expectedStatusCode: number) {
-  const url = this.getUrl();
-  const response = await this.request.delete(url, {
-    headers: this.apiHeaders,
-  });
-  expect(response.status()).toEqual(expectedStatusCode);
-  // DELETE requests might not return JSON
-  return response.status() === 204 ? null : await response.json();
+try {
+  await api.path("/articles").getRequest(200);
+} catch (error) {
+  // Error message includes:
+  // - Expected vs actual status code
+  // - Recent API activity logs (requests and responses)
+  console.error(error.message);
 }
 ```
 
+Example error message:
+
+```
+Expected status 200 but got 404
+
+Recent API Activity:
+===Request Details===
+{
+    "method": "GET",
+    "url": "https://api.example.com/articles/non-existent",
+    "headers": {}
+}
+
+===Response Details===
+{
+    "status": 404,
+    "body": { "error": "Article not found" }
+}
+```
+
+---
+
 ## Integration with Test Fixtures
 
-The `RequestHandler` is typically used through the custom test fixture defined in `utils/fixtures.ts`:
+The `RequestHandler` is typically used through the custom test fixture defined in [`utils/fixtures.ts`](../utils/fixtures.ts:1):
 
 ```typescript
 export const test = base.extend<TestOptions>({
   api: async ({ request }, use) => {
     const baseUrl: string = "https://conduit-api.bondaracademy.com/api";
-    const requestHandler = new RequestHandler(request, baseUrl);
+    const logger = new APILogger();
+    const requestHandler = new RequestHandler(request, baseUrl, logger);
     await use(requestHandler);
   },
 });
 ```
 
-This allows you to access the `api` fixture directly in your tests without needing to instantiate the RequestHandler manually.
+This allows you to access the `api` fixture directly in your tests without needing to instantiate the RequestHandler manually:
+
+```typescript
+import { test } from "../utils/fixtures";
+
+test("Example test", async ({ api }) => {
+  // api is already configured with base URL and logger
+  const response = await api.path("/articles").getRequest(200);
+});
+```
