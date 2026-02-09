@@ -17,19 +17,6 @@ test.beforeAll("run before all", async ({ api }) => {
   authToken = "Token " + tokenResponse.user.token;
 });
 
-test("logger", () => {
-  const logger = new APILogger();
-  logger.logRequest(
-    "GET",
-    "https://test.com/api",
-    { Authorization: "token" },
-    { foo: "bar" },
-  );
-  logger.logResponse(200, { foo: "bar" });
-  const logs = logger.getRecentLogs();
-  console.log(logs);
-});
-
 test("Get Articles", async ({ api }) => {
   const response = await api
     .path("/articles")
