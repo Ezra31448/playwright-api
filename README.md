@@ -59,45 +59,40 @@ test("Get API Data", async ({ api }) => {
 ### Test with Authentication
 
 ```typescript
-import { test, request } from "@playwright/test";
+import { test } from "../utils/fixtures";
+import { expect } from "@playwright/test";
 
 let authToken: string;
 
-test.beforeAll("Setup authentication", async ({ request }) => {
-  const tokenResponse = await request.post(
-    "https://api.example.com/users/login",
-    {
-      data: {
-        user: {
-          email: "test@example.com",
-          password: "password",
-        },
+test.beforeAll("Setup authentication", async ({ api }) => {
+  const tokenResponse = await api
+    .path("/users/login")
+    .body({
+      user: {
+        email: "test@example.com",
+        password: "password",
       },
-    },
-  );
-  const tokenResponseJSON = await tokenResponse.json();
-  authToken = "Token " + tokenResponseJSON.user.token;
+    })
+    .postRequest(200);
+
+  authToken = "Token " + tokenResponse.user.token;
 });
 
-test("Create and verify resource", async ({ request }) => {
-  const createResponse = await request.post(
-    "https://api.example.com/articles",
-    {
-      data: {
-        article: {
-          title: "Test Article",
-          description: "Test Description",
-          body: "Article body content",
-          tagList: ["test"],
-        },
+test("Create and verify resource", async ({ api }) => {
+  const createResponse = await api
+    .path("/articles")
+    .body({
+      article: {
+        title: "Test Article",
+        description: "Test Description",
+        body: "Article body content",
+        tagList: ["test"],
       },
-      headers: {
-        Authorization: authToken,
-      },
-    },
-  );
+    })
+    .header({ Authorization: authToken })
+    .postRequest(201);
 
-  expect(createResponse.status()).toEqual(201);
+  expect(createResponse.article.title).toEqual("Test Article");
 });
 ```
 
