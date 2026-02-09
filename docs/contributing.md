@@ -90,7 +90,16 @@ git add .
 git commit -m "feat: add new feature for handling API responses"
 ```
 
-Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification for commit messages.
+Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification for commit messages:
+
+- `feat:` A new feature
+- `fix:` A bug fix
+- `docs:` Documentation only changes
+- `style:` Changes that do not affect the meaning of the code
+- `refactor:` A code change that neither fixes a bug nor adds a feature
+- `perf:` A code change that improves performance
+- `test:` Adding missing tests or correcting existing tests
+- `chore:` Changes to the build process or auxiliary tools
 
 ### 5. Push to Your Fork
 
@@ -142,7 +151,7 @@ async function getArticles(limit: any): Promise<any> {
 
 ```typescript
 // Good
-const requestHandler = new RequestHandler(request, baseUrl);
+const requestHandler = new RequestHandler(request, baseUrl, logger);
 
 class ApiResponseHandler {
   // implementation
@@ -193,11 +202,50 @@ try {
 async getRequest(
   path: string,
   params?: Record<string, string>,
-  expectedStatusCode: number = 200
+  expectedStatusCode: number = 200,
 ): Promise<any> {
   // implementation
 }
 ```
+
+### Project-Specific Guidelines
+
+#### RequestHandler Extensions
+
+When extending the [`RequestHandler`](../utils/request-handler.ts:5) class:
+
+1. Always include logging via the APILogger
+2. Follow the existing pattern for status code validation
+3. Return JSON response bodies (or null for 204 No Content)
+4. Maintain method chaining for builder methods
+
+```typescript
+async patchRequest(expectedStatusCode: number) {
+  const url = this.getUrl();
+  this.logger.logRequest("PATCH", url, this.apiHeaders, this.apiBody);
+  const response = await this.request.patch(url, {
+    headers: this.apiHeaders,
+    data: this.apiBody,
+  });
+
+  const actualStatus = response.status();
+  const responseJson = await response.json();
+
+  this.logger.logResponse(actualStatus, responseJson);
+  this.statusCodeValidator(actualStatus, expectedStatusCode, this.patchRequest);
+
+  return responseJson;
+}
+```
+
+#### Logger Implementation
+
+When working with the [`APILogger`](../utils/logger.ts:1):
+
+1. Log requests before execution
+2. Log responses after execution
+3. Include all relevant information (method, URL, headers, body, status)
+4. Use consistent formatting for log entries
 
 ## Testing Guidelines
 
@@ -271,9 +319,34 @@ export function createArticleData(overrides = {}) {
 }
 
 // In test
-test("should create article", async ({ request }) => {
+test("should create article", async ({ api }) => {
   const articleData = createArticleData({ title: "Custom Title" });
   // test implementation
+});
+```
+
+### Test Isolation
+
+- Each test should be independent
+- Clean up resources after tests
+- Don't rely on test execution order
+
+```typescript
+test("should create and delete article", async ({ api }) => {
+  // Create
+  const createResponse = await api
+    .path("/articles")
+    .body({ article: createArticleData() })
+    .header({ Authorization: authToken })
+    .postRequest(201);
+
+  const slug = createResponse.article.slug;
+
+  // Cleanup
+  await api
+    .path(`/articles/${slug}`)
+    .header({ Authorization: authToken })
+    .deleteRequest(204);
 });
 ```
 
@@ -284,6 +357,7 @@ test("should create article", async ({ request }) => {
 - Keep the README up-to-date with the latest changes
 - Include clear installation and usage instructions
 - Provide examples of common use cases
+- Document all features and capabilities
 
 ### API Documentation
 
@@ -297,6 +371,15 @@ test("should create article", async ({ request }) => {
 - Explain the "why" not just the "what"
 - Keep comments concise and relevant
 
+### Documentation Files
+
+When updating documentation in the `docs/` directory:
+
+1. Keep examples up-to-date with actual code
+2. Use consistent formatting and structure
+3. Include code examples that are copy-paste ready
+4. Cross-reference related documentation
+
 ## Pull Request Process
 
 ### Before Submitting
@@ -306,6 +389,11 @@ test("should create article", async ({ request }) => {
 3. Update documentation if necessary
 4. Rebase your branch against the main branch
 
+```bash
+git fetch upstream
+git rebase upstream/main
+```
+
 ### Pull Request Template
 
 When creating a pull request, include:
@@ -313,8 +401,26 @@ When creating a pull request, include:
 1. **Description**: A clear description of what you've changed and why
 2. **Testing**: How you've tested your changes
 3. **Documentation**: Any documentation updates
-4. **Screenshots**: If applicable, include screenshots
-5. **Breaking Changes**: Note any breaking changes
+4. **Breaking Changes**: Note any breaking changes
+
+Example:
+
+```
+## Description
+Added PATCH method support to RequestHandler class for partial updates.
+
+## Testing
+- Added unit tests for patchRequest method
+- Tested with real API endpoints
+- All existing tests pass
+
+## Documentation
+- Updated api-reference.md with patchRequest documentation
+- Added examples to examples.md
+
+## Breaking Changes
+None
+```
 
 ### Review Process
 
@@ -374,6 +480,12 @@ This project follows [Semantic Versioning](https://semver.org/):
 - Adding performance tests
 - Documenting performance improvements
 
+### Refactoring
+
+- Improving code structure without changing functionality
+- Adding or improving type definitions
+- Enhancing code readability
+
 ## Getting Help
 
 If you need help with contributing:
@@ -382,5 +494,29 @@ If you need help with contributing:
 2. Read the documentation thoroughly
 3. Ask questions in issues
 4. Join community discussions
+
+## Project Structure Overview
+
+When contributing, it's helpful to understand the project structure:
+
+```
+playwright-api/
+├── docs/           # Documentation files
+├── tests/          # Test files
+├── utils/          # Utility classes
+│   ├── fixtures.ts          # Test fixtures
+│   ├── logger.ts            # APILogger class
+│   └── request-handler.ts  # RequestHandler class
+├── playwright.config.ts     # Playwright configuration
+└── package.json            # Project dependencies
+```
+
+### Key Components
+
+- **RequestHandler**: Fluent API for making HTTP requests with built-in logging
+- **APILogger**: Logging utility for requests and responses
+- **Fixtures**: Playwright test fixtures that provide pre-configured utilities
+
+When adding new features or modifying existing ones, consider how they integrate with these core components.
 
 Thank you for contributing to the Playwright API testing framework! Your contributions help make this project better for everyone.
